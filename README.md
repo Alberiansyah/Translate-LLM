@@ -1,27 +1,54 @@
-# subtitle-translator (Rust)
+# Subtitle Translator (TranslateLLM — Rust)
 
-Web-based subtitle translator (SRT/ASS/SSA/VTT) using a local LLM via
-llama-server (OpenAI-compatible API). Byte-faithful round-trip: only the
-visible text is translated; timestamps, styles and tags are preserved.
+Web-based subtitle translator (SRT / ASS / SSA / VTT) powered by a local LLM
+served through **llama-server** (llama.cpp's OpenAI-compatible API).
+Byte-faithful round-trip: only the visible text is translated — timestamps,
+styles, markup and cue layout are preserved exactly.
 
-## Run
+## Features
 
-Dev (from `target/debug` or `target/release`):
+- **Byte-faithful subtitle handling** — SRT/ASS/SSA/VTT in, same format out.
+- **Line-level dedupe** — identical lines are sent to the LLM once and mapped
+  back to every position that uses them.
+- **Translation memory (SQLite)** — exact-match cache of past translations
+  (`data.db`). Rerunning the same file is ~7x faster. Untrustworthy entries
+  (echoes of the source text) are never served; they self-heal: the line is
+  re-translated and the cache entry is replaced.
+- **Context analysis pass** — one cheap LLM call per file scans the opening
+  lines and injects a short brief (characters / places / tone) into the system
+  prompt for consistent naming across the whole file.
+- **Cross-batch context** — each batch prompt carries the preceding dialogue
+  lines so continuity survives batch boundaries.
+- **Opt-in repair pass** — failed/echoed lines are retried iteratively (batch
+  retry → per-line retry with a temperature swing) toward ~100% first-run
+  coverage.
+- **Job history** — past jobs listed in the UI with re-download.
+
+## Build & run
+
+Requirements: Rust (2021 edition) and a running llama-server.
 
 ```
 cargo build --release
 cargo run --release
 ```
 
-Standalone deployment: the `dist/` folder is a self-contained layout
-(`dist/subtitle-translator.exe` + `dist/app/static`). Start it with
-`dist/run-rust.bat` (default port 8010).
+The web UI is at `http://127.0.0.1:<PORT>` (default `8000`).
 
-The web UI is at `http://127.0.0.1:<PORT>`.
+### Standalone deployment
+
+`dist/` is a self-contained layout (`dist/subtitle-translator.exe` +
+`dist/app/static`). Start it with `dist/run-rust.bat` (port 8010). To rebuild
+it after code changes:
+
+```
+cargo build --release
+copy target\release\subtitle-translator.exe dist\
+```
 
 ## LLM server (llama.cpp)
 
-The app is a stateless HTTP client; a llama-server must be running:
+The app is a stateless HTTP client; a llama-server must be running, e.g.:
 
 ```
 llama-server -m <model.gguf> --host 127.0.0.1 --port 8080
@@ -60,30 +87,68 @@ The app already sends `reasoning_effort: "none"` so thinking-mode models
 | `JOB_TTL_SECONDS` | `3600` | in-memory job retention |
 | `PORT` / `HOST` | `8000` / `127.0.0.1` | HTTP bind |
 
-### Translation quality/efficiency features
+### Quality / efficiency toggles
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TM_ENABLED` | `true` | Translation memory (SQLite `data.db`): exact-match reuse of past translations; identical lines are translated once |
+| `TM_ENABLED` | `true` | Translation memory (SQLite `data.db`): exact-match reuse of past translations; identical lines are translated once. Echo entries self-heal on rerun |
 | `CONTEXT_LINES` | `2` | preceding dialogue lines injected into each batch prompt for continuity (0 disables) |
-| `ANALYZE_CONTEXT` | `true` | one-shot analysis pass: scans the opening lines and injects a characters/terms/tone brief into the system prompt (1 extra LLM call per file) |
+| `ANALYZE_CONTEXT` | `true` | one-shot analysis pass: scans the opening lines and injects a characters/places/tone brief into the system prompt (1 extra LLM call per file, ~0.5s) |
 | `ANALYZE_LINES` | `150` | how many opening lines the analysis pass reads |
 
-### Repair toggle (UI)
+### Repair toggle (UI setting, default **On**)
 
-"Repair Failed Lines" in the settings panel (default **Off**):
+"Repair Failed Lines" in the settings panel:
 
-- **Off** — fastest (measured parity with the plain Python engine). Lines the
-  model fails to translate keep the original text on the first run; rerunning
-  the same file self-heals them via the translation memory.
-- **On (default)** — adds iterative repair rounds (batch retry → per-line
-  retry with a temperature swing), pushing first-run coverage to ~100% at the
-  cost of roughly 20% extra time, depending on how many lines the model
-  misses.
+- **On (default)** — adds iterative repair rounds: numbered batch retry, then
+  per-line retry with a temperature swing (0.2 → 0.8) to break echo loops.
+  Pushes first-run coverage to ~100%; costs roughly 20% extra time depending
+  on how many lines the model misses.
+- **Off** — fastest (measured parity with the plain Python engine, e.g. 85s
+  vs 86s on a 927-line file). Lines the model fails to translate keep the
+  original text on the first run; rerunning the same file self-heals them via
+  the translation memory.
 
 ## Data locations
 
-The base directory is the exe's directory when it contains `app/static`
-(the `dist/` layout), otherwise the repo parent. Base directory contains:
-`data.db` (history + translation memory), `uploads/` (temporary),
-`output/` (translated files).
+The base directory is the exe's directory when it contains `app/static` (the
+`dist/` layout), otherwise the repo parent directory. The base directory
+contains:
+
+| Path | Contents |
+|---|---|
+| `data.db` | job history + translation memory (SQLite, created on first run) |
+| `uploads/` | temporary uploaded files |
+| `output/` | translated files (kept for re-download) |
+
+## HTTP API
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/translate` | POST | translate one uploaded file (multipart: `file`, `source_lang`, `target_lang`, `batch_size`, `max_tokens`, `glossary`, `repair`) |
+| `/api/translate-batch` | POST | translate multiple files |
+| `/api/progress/{job}` | GET | progress polling (status, percent, batches, lines, speed) |
+| `/api/download/{job}` | GET | download the translated file |
+| `/api/cancel/{job}` | POST | cancel a running job |
+| `/api/history` | GET | job history |
+| `/api/languages` | GET | supported language list (107) |
+| `/api/llm-status` | GET | llama-server reachability + model info |
+
+## Project structure
+
+```
+src/
+  main.rs        startup, router, static file serving
+  api.rs         HTTP endpoints, multipart parsing, job registry
+  pipeline.rs    orchestration: dedupe → TM lookup → batching → LLM → save
+  llm.rs         prompt building, chat completions, retries, repair loop
+  batcher.rs     batch planning + per-batch context windows
+  db.rs          history + translation memory (rusqlite)
+  glossary.rs    user glossary parsing/validation
+  langs.rs       language list (107 languages)
+  resolver.rs    pronoun-resolution context helper
+  config.rs      env-var settings
+  state.rs       shared app state
+  subtitle/      subtitle parsing/writing (SRT/ASS/SSA/VTT, tag-safe)
+app/static/      web UI (vanilla HTML/JS/CSS)
+```
