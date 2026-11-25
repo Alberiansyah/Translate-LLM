@@ -1,0 +1,12 @@
+# Rust build artifacts
+/target/
+
+# Standalone deployment folder (exe + bundled static + runtime data)
+/dist/
+
+# Runtime data
+*.db
+*.db-shm
+*.db-wal
+/uploads/
+/output/

@@ -1,0 +1,26 @@
+[package]
+name = "subtitle-translator"
+version = "2.0.0"
+edition = "2021"
+
+[[bin]]
+name = "subtitle-translator"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+tower-http = { version = "0.6", features = ["fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+chrono = "0.4"
+regex = "1"
+encoding_rs = "0.8"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+futures = "0.3"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
