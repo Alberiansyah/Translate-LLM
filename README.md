@@ -5,7 +5,7 @@ through llama-server (llama.cpp's OpenAI-compatible API). Only the spoken
 text gets translated. Timestamps, styles and tags stay untouched, so the
 output drops straight back into your video player.
 
-This is a Rust rewrite of my earlier Python version of the same tool.
+This is a Rust rewrite of the same tool.
 
 ## How it works
 
@@ -60,11 +60,12 @@ wrong answer.
 This pushes first-run coverage to basically 100% and costs around 20% extra
 time, depending on how many lines the model misses.
 
-Turn it off if you care about speed: a plain run matches the old Python
-engine almost exactly (85s vs 86s on a 927-line file). Anything the model
-missed stays untranslated for that run, but the next run of the same file
-fixes it automatically: the translation memory refuses to serve cache entries
-that still look like the source text, re-translates them, and replaces them.
+Turn it off if you care about speed. A plain run skips all of that retry
+machinery, which saves roughly 20% on the first translation of a file. Lines
+the model missed stay untranslated for that run, but the next run of the same
+file fixes them automatically: the translation memory refuses to serve cache
+entries that still look like the source text, re-translates them, and
+replaces them.
 
 ## Settings (environment variables)
 
